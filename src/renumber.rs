@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{Buf, Chunk, Ref};
 
 /// Renumbers a chunk of objects.
@@ -24,6 +26,47 @@ pub fn renumber(source: &Chunk, target: &mut Chunk, mapping: &mut dyn FnMut(Ref)
             target.buf.extend(b"\n");
         }
     }
+}
+
+/// Renumbers a chunk of objects and writes them directly to a writer.
+///
+/// For each object, records `(new_ref, file_offset)` into `offsets`.
+/// Uses a small temporary buffer per object instead of allocating a
+/// full copy of the chunk.
+pub fn renumber_to_writer<W: Write>(
+    source: &Chunk,
+    writer: &mut W,
+    mapping: &mut dyn FnMut(Ref) -> Ref,
+    offsets: &mut Vec<(Ref, u64)>,
+    bytes_written: &mut u64,
+) -> std::io::Result<()> {
+    // Reusable buffer for patching one object at a time.
+    let mut obj_buf = Buf::new();
+
+    let mut iter = source.offsets.iter().copied().peekable();
+    while let Some((id, offset)) = iter.next() {
+        let new = mapping(id);
+        let end = iter.peek().map_or(source.buf.len(), |&(_, offset)| offset);
+        let slice = &source.buf[offset..end];
+        let Some((gen, slice)) = extract_object(slice) else { continue };
+
+        // Record the file offset for this object.
+        offsets.push((new, *bytes_written));
+
+        // Build the patched object into the reusable buffer.
+        obj_buf.clear();
+        obj_buf.push_int(new.get());
+        obj_buf.push(b' ');
+        obj_buf.push_int(gen);
+        obj_buf.extend(b" obj\n");
+        patch_object(slice, &mut obj_buf, mapping);
+        obj_buf.extend(b"\nendobj\n\n");
+
+        // Write to stream and advance offset.
+        writer.write_all(obj_buf.as_slice())?;
+        *bytes_written += obj_buf.len() as u64;
+    }
+    Ok(())
 }
 
 /// Extract the generation number and interior of an indirect object.

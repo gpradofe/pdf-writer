@@ -67,6 +67,16 @@ impl Chunk {
         }
     }
 
+    /// Reconstruct a chunk from raw bytes and object offsets.
+    /// Used for reading chunks back from disk-backed storage.
+    /// Limits are not tracked (not needed for renumbering/streaming).
+    pub fn from_raw(bytes: Vec<u8>, offsets: Vec<(Ref, usize)>) -> Self {
+        Self {
+            buf: Buf { inner: bytes, limits: Limits::new() },
+            offsets,
+        }
+    }
+
     /// The number of bytes that were written so far.
     #[inline]
     #[allow(clippy::len_without_is_empty)]
@@ -82,6 +92,12 @@ impl Chunk {
     /// The bytes already written so far.
     pub fn as_bytes(&self) -> &[u8] {
         self.buf.as_slice()
+    }
+
+    /// The byte offsets of all indirect objects in this chunk.
+    /// Each entry is `(object_ref, byte_offset_in_chunk)`.
+    pub fn object_offsets(&self) -> &[(Ref, usize)] {
+        &self.offsets
     }
 
     /// Add all objects from another chunk to this one.
@@ -174,6 +190,26 @@ impl Chunk {
         let mut chunk = Chunk::with_capacity(self.len());
         self.renumber_into(&mut chunk, mapping);
         chunk
+    }
+
+    /// Renumber and write objects directly to a writer stream.
+    ///
+    /// For each object, records `(new_ref, file_offset)` into `offsets`.
+    /// Uses a small per-object buffer instead of allocating a full copy.
+    /// This is much more memory-efficient than [`renumber`](Self::renumber)
+    /// for large chunks.
+    pub fn renumber_to_writer<W: std::io::Write, F>(
+        &self,
+        writer: &mut W,
+        mapping: F,
+        offsets: &mut Vec<(Ref, u64)>,
+        bytes_written: &mut u64,
+    ) -> std::io::Result<()>
+    where
+        F: FnMut(Ref) -> Ref,
+    {
+        let mut mapping = mapping;
+        crate::renumber::renumber_to_writer(self, writer, &mut mapping, offsets, bytes_written)
     }
 
     /// Same as [`renumber`](Self::renumber), but writes the results into an

@@ -14,6 +14,10 @@ impl Buf {
         Self { inner: Vec::new(), limits: Limits::new() }
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.inner.clear();
+    }
+
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             inner: Vec::with_capacity(capacity),
