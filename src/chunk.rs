@@ -73,6 +73,7 @@ impl Chunk {
     pub fn from_raw(bytes: Vec<u8>, offsets: Vec<(Ref, usize)>) -> Self {
         Self {
             buf: Buf { inner: bytes, limits: Limits::new() },
+            settings: Settings::default(),
             offsets,
         }
     }
